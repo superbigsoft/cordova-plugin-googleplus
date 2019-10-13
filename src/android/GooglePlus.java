@@ -3,8 +3,6 @@ package nl.xservices.plugins;
 import android.accounts.Account;
 import android.accounts.AccountManager;
 import android.accounts.AccountManagerFuture;
-import android.accounts.AuthenticatorException;
-import android.accounts.OperationCanceledException;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
@@ -13,18 +11,16 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
 
-import com.google.android.gms.auth.api.Auth;
-import com.google.android.gms.auth.api.signin.GoogleSignInResult;
+import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.common.api.ResultCallback;
-import com.google.android.gms.common.api.Status;
-import com.google.android.gms.common.api.Scope;
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
+import com.google.android.gms.tasks.Task;
 
 import org.apache.cordova.*;
-import org.apache.cordova.engine.SystemWebChromeClient;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -42,7 +38,7 @@ import android.content.pm.Signature;
  * Originally written by Eddy Verbruggen (http://github.com/EddyVerbruggen/cordova-plugin-googleplus)
  * Forked/Duplicated and Modified by PointSource, LLC, 2016.
  */
-public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConnectionFailedListener {
+public class GooglePlus extends CordovaPlugin {
 
     public static final String ACTION_IS_AVAILABLE = "isAvailable";
     public static final String ACTION_LOGIN = "login";
@@ -67,8 +63,8 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
     public static final int KAssumeStaleTokenSec = 60;
 
     // Wraps our service connection to Google Play services and provides access to the users sign in state and Google APIs
-    private GoogleApiClient mGoogleApiClient;
     private CallbackContext savedCallbackContext;
+    private GoogleSignInClient mSignInClient;
 
     @Override
     public void initialize(CordovaInterface cordova, CordovaWebView webView) {
@@ -129,12 +125,12 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
 
         //If options have been passed in, they could be different, so force a rebuild of the client
         // disconnect old client iff it exists
-        if (this.mGoogleApiClient != null) this.mGoogleApiClient.disconnect();
-        // nullify
-        this.mGoogleApiClient = null;
+        if (this.mSignInClient != null) this.mSignInClient.signOut();
+        this.mSignInClient = null;
 
         Log.i(TAG, "Building Google options");
 
+        /*
         // Make our SignIn Options builder.
         GoogleSignInOptions.Builder gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN);
 
@@ -175,15 +171,25 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
         }
 
         //Now that we have our options, let's build our Client
-        Log.i(TAG, "Building GoogleApiClient");
+        Log.i(TAG, "Building GoogleSignIn");
 
-        GoogleApiClient.Builder builder = new GoogleApiClient.Builder(webView.getContext())
-            .addOnConnectionFailedListener(this)
-            .addApi(Auth.GOOGLE_SIGN_IN_API, gso.build());
+        //GoogleApiClient.Builder builder = new GoogleApiClient.Builder(webView.getContext())
+        //    .addOnConnectionFailedListener(this)
+        //    .addApi(Auth.GOOGLE_SIGN_IN_API, gso.build());
 
-        this.mGoogleApiClient = builder.build();
+        //this.mGoogleApiClient = builder.build();
+        */
 
-        Log.i(TAG, "GoogleApiClient built");
+        Log.i(TAG, "Building GoogleSignIn");
+        GoogleSignInOptions options =
+                new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                        .requestEmail()
+                        .build();
+
+        this.mSignInClient = GoogleSignIn.getClient(webView.getContext(), options);
+
+
+        Log.i(TAG, "GoogleSignIn built");
     }
 
     // The Following functions were implemented in reference to Google's example here:
@@ -193,7 +199,7 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
      * Starts the sign in flow with a new Intent, which should respond to our activity listener here.
      */
     private void signIn() {
-        Intent signInIntent = Auth.GoogleSignInApi.getSignInIntent(this.mGoogleApiClient);
+        Intent signInIntent = this.mSignInClient.getSignInIntent();
         cordova.getActivity().startActivityForResult(signInIntent, RC_GOOGLEPLUS);
     }
 
@@ -201,22 +207,22 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
      * Tries to log the user in silently using existing sign in result information
      */
     private void trySilentLogin() {
-        ConnectionResult apiConnect =  mGoogleApiClient.blockingConnect();
-
-        if (apiConnect.isSuccess()) {
-            handleSignInResult(Auth.GoogleSignInApi.silentSignIn(this.mGoogleApiClient).await());
-        }
+        this.handleSignInResult(this.mSignInClient.silentSignIn());
     }
 
     /**
      * Signs the user out from the client
      */
     private void signOut() {
-        if (this.mGoogleApiClient == null) {
+        if (this.mSignInClient == null) {
             savedCallbackContext.error("Please use login or trySilentLogin before logging out");
             return;
         }
 
+        this.mSignInClient.signOut();
+        savedCallbackContext.success("Logged user out");
+
+        /*
         ConnectionResult apiConnect = mGoogleApiClient.blockingConnect();
 
         if (apiConnect.isSuccess()) {
@@ -234,16 +240,22 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
                     }
             );
         }
+        */
     }
 
     /**
      * Disconnects the user and revokes access
      */
     private void disconnect() {
-        if (this.mGoogleApiClient == null) {
+        if (this.mSignInClient == null) {
             savedCallbackContext.error("Please use login or trySilentLogin before disconnecting");
             return;
         }
+
+        this.mSignInClient.revokeAccess();
+        savedCallbackContext.success("Disconnected user");
+
+        /*
 
         ConnectionResult apiConnect = mGoogleApiClient.blockingConnect();
 
@@ -261,18 +273,9 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
                     }
             );
         }
+        */
     }
 
-    /**
-     * Handles failure in connecting to google apis.
-     *
-     * @param result is the ConnectionResult to potentially catch
-     */
-    @Override
-    public void onConnectionFailed(ConnectionResult result) {
-        Log.i(TAG, "Unresolvable failure in connecting to Google APIs");
-        savedCallbackContext.error(result.getErrorCode());
-    }
 
     /**
      * Listens for and responds to an activity result. If the activity result request code matches our own,
@@ -293,7 +296,9 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
         if (requestCode == RC_GOOGLEPLUS) {
             Log.i(TAG, "One of our activities finished up");
             //Call handleSignInResult passing in sign in result object
-            handleSignInResult(Auth.GoogleSignInApi.getSignInResultFromIntent(intent));
+            //handleSignInResult(Auth.GoogleSignInApi.getSignInResultFromIntent(intent));
+            Task<GoogleSignInAccount> task = GoogleSignIn.getSignedInAccountFromIntent(intent);
+            handleSignInResult(task);
         }
         else {
             Log.i(TAG, "This wasn't one of our activities");
@@ -315,35 +320,23 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
      *      INTERNAL_ERROR = 8
      *      NETWORK_ERROR = 7
      *
-     * @param signInResult - the GoogleSignInResult object retrieved in the onActivityResult method.
+     * @param completedTask - the GoogleSignInAccount object retrieved in the onActivityResult method.
      */
-    private void handleSignInResult(final GoogleSignInResult signInResult) {
-        if (this.mGoogleApiClient == null) {
-            savedCallbackContext.error("GoogleApiClient was never initialized");
-            return;
-        }
 
-        if (signInResult == null) {
-          savedCallbackContext.error("SignInResult is null");
-          return;
-        }
+    private void handleSignInResult(Task<GoogleSignInAccount> completedTask) {
+        try {
+            GoogleSignInAccount acct = completedTask.getResult(ApiException.class);
 
-        Log.i(TAG, "Handling SignIn Result");
+            Log.i(TAG, "Handling SignIn Result");
 
-        if (!signInResult.isSuccess()) {
-            Log.i(TAG, "Wasn't signed in");
 
-            //Return the status code to be handled client side
-            savedCallbackContext.error(signInResult.getStatus().getStatusCode());
-        } else {
             new AsyncTask<Void, Void, Void>() {
                 @Override
                 protected Void doInBackground(Void... params) {
-                    GoogleSignInAccount acct = signInResult.getSignInAccount();
                     JSONObject result = new JSONObject();
                     try {
                         JSONObject accessTokenBundle = getAuthToken(
-                            cordova.getActivity(), acct.getAccount(), true
+                                cordova.getActivity(), acct.getAccount(), true
                         );
                         result.put(FIELD_ACCESS_TOKEN, accessTokenBundle.get(FIELD_ACCESS_TOKEN));
                         result.put(FIELD_TOKEN_EXPIRES, accessTokenBundle.get(FIELD_TOKEN_EXPIRES));
@@ -363,6 +356,11 @@ public class GooglePlus extends CordovaPlugin implements GoogleApiClient.OnConne
                     return null;
                 }
             }.execute();
+
+        } catch (ApiException e) {
+            Log.i(TAG, "Wasn't signed in");
+            //Return the status code to be handled client side
+            savedCallbackContext.error(e.getStatusCode());
         }
     }
 
